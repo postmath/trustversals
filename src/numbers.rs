@@ -1,6 +1,6 @@
 use num_traits::Num;
 
-pub trait HNumber: Num + Clone {
+pub trait HNumber: Num + Clone + Copy + Ord {
     fn count_ones(self) -> u32;
 }
 

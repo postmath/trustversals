@@ -1,3 +1,5 @@
+use crate::numbers::HNumber;
+use std::cmp::Ordering;
 use std::num::NonZeroU32;
 
 /// A hypergraph with `n_vertices` vertices and `len(weights)` hyperedges. Each hyperedge is
@@ -5,14 +7,21 @@ use std::num::NonZeroU32;
 /// `hyperedges[i * chunk_size .. (i+1) * chunk_size]`. The presence of vertex 0 in this hyperedge
 /// is indicated by the lowest bit of `hyperedges[i * chunk_size]`. The empty hyperedge is not
 /// allowed. The ith hyperedge has weight (size) `weights[i]`.
-pub struct Hypergraph<I> {
+pub struct Hypergraph<I>
+where
+    I: HNumber,
+{
     n_vertices: u32,
     chunk_size: usize,
     hyperedges: Vec<I>,
     weights: Vec<NonZeroU32>,
 }
 
-impl<I> Hypergraph<I> {
+impl<I> Hypergraph<I>
+where
+    I: HNumber,
+{
+    /// Create an empty hypergraph on `n_vertices` vertices.
     pub fn new(n_vertices: u32) -> Self {
         let bit_size = std::mem::size_of::<I>() * 8;
         let n_v = n_vertices as usize;
@@ -23,6 +32,116 @@ impl<I> Hypergraph<I> {
             hyperedges: vec![],
             weights: vec![],
         }
+    }
+
+    /// Add a hyperedge to the hypergraph. The hyperedge is given by the slice `edge`, which must
+    /// consist of `chunk_size` entries (this code will panic otherwise).
+    pub fn add_edge(&mut self, edge: &[I]) {
+        if edge.len() != self.chunk_size {
+            panic!(
+                "received slice of length {0} while chunk size is {1}",
+                edge.len(),
+                self.chunk_size
+            );
+        }
+
+        let weight: u32 = edge.iter().map(|x| x.count_ones()).sum();
+        self.weights
+            .push(NonZeroU32::new(weight).expect("cannot add the empty edge"));
+        self.hyperedges.extend_from_slice(edge);
+    }
+
+    fn bucket_sort_weights(&mut self) {
+        // We want weight_count[i] to be the number of hyperedges of weight i+1.
+        let mut weight_count = vec![0; self.n_vertices as usize];
+        for w in self.weights.iter() {
+            weight_count[w.get() as usize - 1] += 1;
+        }
+
+        // We want positions[i-1] .. positions[i] to be the index range where hyperedges of weight
+        // i+1 will be found in the sorted order, with positions[-1] interpreted as 0. (This is a
+        // consequence of rust's scan function being inclusive; with an exclusive scan, we would
+        // have had positions[i] .. positions[i+1].)
+        let mut positions: Vec<usize> = weight_count
+            .into_iter()
+            .scan(0, |state, x| {
+                *state += x;
+                Some(*state)
+            })
+            .collect();
+
+        // Now we scatter self.hyperedges into new_hyperedges according to positions. We fill each
+        // segment positions[i-1] .. positions[i] from the end, decreasing positions[i] before
+        // writing to that index. That means that we end up with the reverse: after the loop,
+        // positions[i] .. positions[i+1] will contain the hyperedges of weight i, where we
+        // interpret positions[self.n_vertices] as self.weights.len().
+        let mut new_hyperedges = vec![I::zero(); self.hyperedges.len()];
+        for i in 0..self.weights.len() {
+            let w = (self.weights[i].get() - 1) as usize;
+            positions[w] -= 1;
+            let p = positions[w];
+            new_hyperedges[p * self.chunk_size..(p + 1) * self.chunk_size]
+                .copy_from_slice(&self.hyperedges[i * self.chunk_size..(i + 1) * self.chunk_size]);
+        }
+        self.hyperedges = new_hyperedges;
+
+        // We add a final entry so that this works for each of the subranges.
+        positions.push(self.weights.len());
+
+        // Now let's update the weights.
+        for i in 0..self.n_vertices {
+            let j = i as usize;
+            self.weights[positions[j]..positions[j + 1]].fill(NonZeroU32::new(i + 1).unwrap());
+        }
+    }
+
+    /// Sort the hyperedges in order of increasing weight, and within a weight class, sort the
+    /// hyperedges by increasing value. Uniquify the hyperedges, too.
+    pub fn sort(&mut self) {
+        // We can't easily use a "canned" sorting algorithm, because we need to sort hyperedges and
+        // weights in tandem. But we can do a bucket sort by weight: the possible weights range from
+        // 1 to n_vertices, which we should be willing to store.
+        self.bucket_sort_weights();
+
+        // Finally, we sort each of the segments of equal weight.
+        for i in 0..self.n_vertices as usize - 1 {
+            sort_slice_of_chunks(
+                &mut self.hyperedges[i * self.chunk_size..(i + 1) * self.chunk_size],
+                self.chunk_size,
+            );
+        }
+    }
+}
+
+fn compare_chunks<I>(chunks: &[I], chunk_size: usize, a: usize, b: usize) -> Ordering
+where
+    I: HNumber,
+{
+    for i in 0..chunk_size {
+        let ord = chunks[a * chunk_size + i].cmp(&chunks[b * chunk_size + i]);
+        match ord {
+            Ordering::Less | Ordering::Greater => return ord,
+            Ordering::Equal => {}
+        }
+    }
+    Ordering::Equal
+}
+
+fn sort_slice_of_chunks<I>(chunks: &mut [I], chunk_size: usize)
+where
+    I: HNumber,
+{
+    let n_slices = chunks.len() / chunk_size;
+    let mut indices: Vec<_> = (0..n_slices).collect();
+    indices.sort_unstable_by(|&a, &b| compare_chunks(chunks, chunk_size, a, b));
+
+    let new_order: Vec<I> = indices
+        .into_iter()
+        .flat_map(|i| (i * chunk_size..(i + 1) * chunk_size).map(|i| chunks[i]))
+        .collect();
+
+    for (dest, src) in chunks.iter_mut().zip(new_order) {
+        *dest = src;
     }
 }
 
@@ -40,5 +159,74 @@ mod tests {
 
         let h2 = Hypergraph::<u64>::new(1025);
         assert_eq!(h2.chunk_size, 17);
+    }
+
+    #[test]
+    fn add_some_edges() {
+        let mut h0 = Hypergraph::<u32>::new(50);
+        assert_eq!(h0.chunk_size, 2);
+
+        let e00 = (1u32 << 30) + (1u32 << 15) + (1u32 << 3);
+        let e01 = (1u32 << 14) + (1u32 << 12) + (1u32 << 4);
+        let e0 = vec![e00, e01];
+        h0.add_edge(&e0);
+        assert_eq!(h0.hyperedges.len(), h0.chunk_size);
+        assert_eq!(h0.hyperedges[0], e00);
+        assert_eq!(h0.hyperedges[1], e01);
+        assert_eq!(h0.weights.len(), 1);
+        assert_eq!(h0.weights[0], NonZeroU32::new(6).unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "received slice of length 1 while chunk size is 2")]
+    fn add_wrong_size_chunk() {
+        let mut h0 = Hypergraph::<u32>::new(50);
+        assert_eq!(h0.chunk_size, 2);
+
+        let e00 = (1u32 << 30) + (1u32 << 15) + (1u32 << 3);
+        let e0 = vec![e00];
+        h0.add_edge(&e0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot add the empty edge")]
+    fn add_empty_edge() {
+        let mut h0 = Hypergraph::<u32>::new(50);
+        assert_eq!(h0.chunk_size, 2);
+
+        let e0 = vec![0, 0];
+        h0.add_edge(&e0);
+    }
+
+    #[test]
+    fn test_sort_slice_of_chunks() {
+        let mut v: Vec<u32> = vec![1, 2, 4, 1, 2, 3, 2, 2, 1];
+        sort_slice_of_chunks(&mut v, 3);
+        assert_eq!(v, vec![1, 2, 3, 1, 2, 4, 2, 2, 1]);
+    }
+
+    #[test]
+    fn test_sort() {
+        let mut h = Hypergraph::<u32>::new(5);
+        h.add_edge(&[14]); // 1-2-3
+        h.add_edge(&[5]); // 0-2
+        h.add_edge(&[3]); // 0-1
+        h.add_edge(&[16]); // 4
+
+        assert_eq!(h.hyperedges, vec![14, 5, 3, 16]);
+        let expected_weights: Vec<_> = (vec![3, 2, 2, 1])
+            .into_iter()
+            .map(|i| NonZeroU32::new(i).unwrap())
+            .collect();
+        assert_eq!(h.weights, expected_weights);
+
+        h.sort();
+
+        assert_eq!(h.hyperedges, vec![16, 3, 5, 14]);
+        let expected_weights: Vec<_> = (vec![1, 2, 2, 3])
+            .into_iter()
+            .map(|i| NonZeroU32::new(i).unwrap())
+            .collect();
+        assert_eq!(h.weights, expected_weights);
     }
 }
