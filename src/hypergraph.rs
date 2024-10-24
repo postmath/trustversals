@@ -1,3 +1,5 @@
+mod examples;
+
 use crate::numbers::HNumber;
 use std::cmp::Ordering;
 use std::num::NonZeroU32;
@@ -109,6 +111,22 @@ where
                 &mut self.hyperedges[i * self.chunk_size..(i + 1) * self.chunk_size],
                 self.chunk_size,
             );
+        }
+    }
+}
+
+impl<I> Hypergraph<I>
+where
+    I: std::fmt::Binary + HNumber,
+{
+    pub fn print_edges(&self) {
+        let bit_size = std::mem::size_of::<I>() * 8;
+        for i in 0..self.weights.len() {
+            for j in 0..self.chunk_size {
+                let word = self.hyperedges[i * self.chunk_size + j];
+                print!("{word:0w$b} ", w = bit_size);
+            }
+            println!("");
         }
     }
 }
