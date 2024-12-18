@@ -1,4 +1,4 @@
-mod examples;
+pub mod examples;
 
 use crate::numbers::HNumber;
 use std::cmp::Ordering;

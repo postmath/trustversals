@@ -1,6 +1,7 @@
 use num_traits::int::PrimInt;
+use std::fmt::Debug;
 
-pub trait HNumber: PrimInt + Clone {}
+pub trait HNumber: PrimInt + Clone + Debug {}
 
 macro_rules! hnumber_impl {
     ($($t:ty)*) => ($(
