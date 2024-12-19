@@ -363,7 +363,7 @@ mod tests {
         let h = binomial::<u32>(1, 1);
         assert_eq!(h.n_vertices, 1);
         assert_eq!(h.hyperedges, vec![1]);
-        assert_eq!(h.weights, vec![NonZeroU32::new(1).unwrap()]);
+        assert!(h.weights.iter().all(|i| i.get() == 1));
     }
 
     #[test]
@@ -405,7 +405,7 @@ mod tests {
         let h = lovasz::<u32>(1);
         assert_eq!(h.n_vertices, 1);
         assert_eq!(h.hyperedges, vec![1]);
-        assert_eq!(h.weights, vec![NonZeroU32::new(1).unwrap()]);
+        assert!(h.weights.iter().all(|i| i.get() == 1));        
     }
 
     #[test]
@@ -415,7 +415,7 @@ mod tests {
         let mut hs = h.hyperedges.clone();
         hs.sort();
         assert_eq!(hs, vec![3, 5, 6]);
-        assert_eq!(h.weights, vec![NonZeroU32::new(2).unwrap(); 3]);
+        assert!(h.weights.iter().all(|i| i.get() == 2));
     }
 
     #[test]
@@ -473,6 +473,24 @@ mod tests {
         ];
         assert_eq!(h.hyperedges, expected);
 
-        assert_eq!(h.weights, vec![NonZeroU32::new(4).unwrap(); 41]);
+        assert!(h.weights.iter().all(|i| i.get() == 4));
     }
+
+    #[test]
+    fn test_lovasz_10() {
+        let h = lovasz::<u32>(10);
+
+        // Check the number of vertices
+        // The number of vertices is the sum of the first 10 natural numbers: 1 + 2 + ... + 10
+        let expected_vertices = (10 * (10 + 1)) / 2;
+        assert_eq!(h.n_vertices, expected_vertices);
+
+        // Check the number of hyperedges. This is given by the recursion a_n = n*a_{n-1} + 1, a_0 = 0.
+        let expected_hyperedges = 6235301;
+        assert_eq!(h.hyperedges.len() / h.chunk_size, expected_hyperedges);
+
+        // Check that all hyperedges have a weight of 10
+        assert!(h.weights.iter().all(|i| i.get() == 10));
+    }
+
 }
