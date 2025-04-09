@@ -8,7 +8,7 @@ where
     I::max_value() ^ mask
 }
 
-// An I where the m rightmost bits are zero, then n bits are one, and then the rest is zero.
+/// An I where the m rightmost bits are zero, then n bits are one, and then the rest is zero.
 #[inline]
 fn mask_ones_zeroes_right<I>(n: u32, m: u32) -> I
 where
@@ -29,7 +29,7 @@ where
     }
 }
 
-// An I where the m rightmost bits are one, then n bits are zero, then the rest is one.
+/// An I where the m rightmost bits are one, then n bits are zero, then the rest is one.
 #[inline]
 fn mask_zeroes_ones_right<I>(n: u32, m: u32) -> I
 where
@@ -38,7 +38,7 @@ where
     mask_complement(mask_ones_zeroes_right(n, m))
 }
 
-// An I where the n rightmost bits are one and all others are zero.
+/// An I where the n rightmost bits are one and all others are zero.
 #[inline]
 fn mask_ones_right<I>(n: u32) -> I
 where
@@ -47,7 +47,7 @@ where
     mask_ones_zeroes_right(n, 0)
 }
 
-// An I where the n rightmost bits are zero and all others are one.
+/// An I where the n rightmost bits are zero and all others are one.
 #[inline]
 fn mask_zeroes_right<I>(n: u32) -> I
 where
@@ -91,10 +91,10 @@ where
 
         let mut state = vec![I::zero(); num_words];
         let num_one_words: usize = k / bit_size_u;
-        state[0..num_one_words].fill(I::max_value());
+        state[num_words - num_one_words..num_words].fill(I::max_value());
         let num_one_bits = k % bit_size_u;
         if num_one_bits > 0 {
-            state[num_one_words] = (I::one() << num_one_bits) - I::one();
+            state[num_words - num_one_words - 1] = (I::one() << num_one_bits) - I::one();
         }
 
         Self {
@@ -106,17 +106,17 @@ where
     fn trailing_ones_and_zeroes(&self) -> Option<(u32, u32)> {
         let bit_size = (std::mem::size_of::<I>() * 8) as u32;
 
-        let mut idx = 0usize;
-        let mut zeroes_here = self.state[0].trailing_zeros();
+        let mut idx = self.state.len() - 1;
+        let mut zeroes_here = self.state[idx].trailing_zeros();
         let mut zeroes = zeroes_here;
 
-        while zeroes_here == bit_size && idx < self.state.len() - 1 {
-            idx += 1;
+        while zeroes_here == bit_size && idx > 0 {
+            idx -= 1;
             zeroes_here = self.state[idx].trailing_zeros();
             zeroes += zeroes_here;
         }
 
-        if idx == self.state.len() - 1 && zeroes_here == bit_size {
+        if idx == 0 && zeroes_here == bit_size {
             // The value contained is all zeroes.
             return None;
         }
@@ -125,15 +125,15 @@ where
         let mut ones_here = next_word.trailing_ones();
         let mut ones = ones_here;
 
-        if idx == self.state.len() - 1 {
+        if idx == 0 {
             return Some((ones, zeroes));
         } else if ones_here + zeroes_here == bit_size {
-            // Now we know that idx < self.state.len() - 1; we need to examine the next word.
-            idx += 1;
+            // Now we know that idx > 0; we need to examine the next word.
+            idx -= 1;
             ones_here = self.state[idx].trailing_ones();
             ones += ones_here;
-            while ones_here == bit_size && idx < self.state.len() - 1 {
-                idx += 1;
+            while ones_here == bit_size && idx > 0 {
+                idx -= 1;
                 ones_here = self.state[idx].trailing_ones();
                 ones += ones_here;
             }
@@ -169,12 +169,12 @@ where
             }
 
             // Set m-1 one bits on the right
-            let mut idx = 0usize;
+            let mut idx = self.state.len() - 1;
             let mut ones_to_set = m - 1;
             while ones_to_set >= bit_size {
                 self.state[idx] = I::max_value();
                 ones_to_set -= bit_size;
-                idx += 1;
+                idx -= 1;
             }
             self.state[idx] = self.state[idx] | mask_ones_right(ones_to_set);
             // Now 'ones_to_set' is the number of ones set in this last word.
@@ -187,19 +187,19 @@ where
             } else {
                 self.state[idx] = self.state[idx] & mask_ones_right(ones_to_set);
                 zeroes_to_set -= bit_size - ones_to_set;
-                idx += 1;
+                idx -= 1;
                 while zeroes_to_set >= bit_size {
                     self.state[idx] = I::zero();
                     zeroes_to_set -= bit_size;
-                    idx += 1;
+                    idx -= 1;
                 }
                 self.state[idx] = self.state[idx] & mask_zeroes_right(zeroes_to_set);
             }
 
             // Set the one bit on the left
-            let word = (m + n) / bit_size;
+            let word = self.state.len() - 1 - ((m + n) / bit_size) as usize;
             let bit = (m + n) % bit_size;
-            self.state[word as usize] = self.state[word as usize] | (I::one() << (bit as usize));
+            self.state[word] = self.state[word] | (I::one() << (bit as usize));
 
             true
         } else {
@@ -234,19 +234,27 @@ struct BitPosition {
 }
 
 impl BitPosition {
-    /// Returns a vector of BitPosition structs starting with the very first bit, then one bit
-    /// further, then two bits further than that, etc., up to and including an interval of length
-    /// `r` bits. Each word has `bit_size` bits.
+    /// Returns a vector of BitPosition structs such that the distance between the first two is 1, then 2, then 3, etc., up to and including an interval of length
+    /// `r` bits. Each word has `bit_size` bits. The last position is at bit 0 of a word. The first position is in word 0.
     pub fn increasing(r: usize, bit_size: u32) -> Vec<Self> {
-        (0u32..=(r as u32))
+        let bit_size_usize = bit_size as usize;
+        let bits_needed = r * (r + 1) / 2;
+        let words_needed = if bits_needed % (bit_size_usize) == 0 {
+            bits_needed / bit_size_usize
+        } else {
+            bits_needed / bit_size_usize + 1
+        };
+        (1u32..=(r as u32))
+            .chain(std::iter::once(0))
+            .rev()
             .scan(
                 BitPosition {
-                    word: 0usize,
+                    word: words_needed - 1,
                     bit: 0u32,
                 },
                 |state, value| {
                     state.bit += value;
-                    state.word += (state.bit / bit_size) as usize;
+                    state.word -= (state.bit / bit_size) as usize;
                     state.bit %= bit_size;
                     Some(BitPosition {
                         bit: state.bit,
@@ -254,6 +262,9 @@ impl BitPosition {
                     })
                 },
             )
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
             .collect()
     }
 }
@@ -271,49 +282,51 @@ pub fn lovasz<I: HNumber>(r: usize) -> Hypergraph<I> {
 
     let groups = BitPosition::increasing(r, bit_size);
 
-    let top_position = &groups[groups.len() - 1];
+    let top_position = &groups[0];
     let bits_in_top_word = top_position.bit;
-    let num_words = if bits_in_top_word == 0 {
-        top_position.word
+    let (num_words, total_bits) = if bits_in_top_word == 0 {
+        (groups[r].word, groups[r].word as u32 * bit_size)
     } else {
-        top_position.word + 1
+        (
+            groups[r].word + 1,
+            groups[r].word as u32 * bit_size + bits_in_top_word,
+        )
     };
     let mut state = vec![I::zero(); num_words];
     // We use metastate to keep track of which bit is set in which group: metastate[i] = m for i > k
     // means that of the bits in group i, only bit m is set.
     let mut metastate = vec![0u32; r];
 
-    let total_bits = (top_position.word as u32) * bit_size + bits_in_top_word;
     let mut h = Hypergraph::<I>::new(total_bits);
 
     'outer_loop: for k in (0..r).rev() {
         // All bits in groups 0 .. k are currently unset. We set all bits in group k and for all
         // higher groups, initially set the rightmost bit in each group and unset all lower bits.
 
-        // Step 1: clear all bits in group k+1 and beyond (including potentially some in group k).
+        // Step 1: clear all bits in group k+1 and beyond (including potentially some or all in group k).
         state[groups[k + 1].word..].fill(I::zero());
 
         // Step 2: set all bits in group k.
         if groups[k].word == groups[k + 1].word {
             // Group k falls within one word.
             state[groups[k].word] =
-                mask_ones_zeroes_right(groups[k + 1].bit - groups[k].bit, groups[k].bit)
+                mask_ones_zeroes_right(groups[k].bit - groups[k + 1].bit, groups[k + 1].bit)
         } else {
-            state[groups[k].word] = mask_zeroes_right(groups[k].bit);
+            state[groups[k + 1].word] = mask_zeroes_right(groups[k + 1].bit);
             state[groups[k].word + 1..groups[k + 1].word].fill(mask_ones_right(bit_size));
-            state[groups[k + 1].word] = mask_ones_right(groups[k + 1].bit);
+            state[groups[k].word] = mask_ones_right(groups[k].bit);
         }
 
         // Step 3: for groups k + 1 .. r, set the rightmost bit in that group.
         for m in k + 1..r {
             metastate[m] = 0;
-            let BitPosition { word, bit } = &groups[m];
+            let BitPosition { word, bit } = &groups[m + 1];
             state[*word] = state[*word] | I::one() << (*bit as usize);
         }
 
         // Now the first hyperedge for this value of `k` is correctly initialized. Iterate through
-        // the others in lexicographic order: in each iteration, find the last possible value to
-        // increase, then set each entry after that to 1.
+        // the others in lexicographic order: in each iteration, find the last possible entry of
+        // metastate to increase, then set each entry after that to 1.
         loop {
             h.add_edge(&state);
 
@@ -337,16 +350,16 @@ pub fn lovasz<I: HNumber>(r: usize) -> Hypergraph<I> {
             // to_increase - 1 and before intact.
             state[groups[to_increase].word + 1..].fill(I::zero());
             state[groups[to_increase].word] =
-                state[groups[to_increase].word] & mask_ones_right(groups[to_increase].bit);
+                state[groups[to_increase].word] & mask_zeroes_right(groups[to_increase].bit);
 
-            let bit_index = groups[to_increase].bit + metastate[to_increase];
-            let word = groups[to_increase].word + (bit_index / bit_size) as usize;
+            let bit_index = groups[to_increase + 1].bit + metastate[to_increase];
+            let word = groups[to_increase + 1].word - (bit_index / bit_size) as usize;
             let bit_index = bit_index % bit_size;
             state[word] = state[word] | I::one() << (bit_index as usize);
 
             for m in to_increase + 1..r {
                 metastate[m] = 0;
-                let BitPosition { word, bit } = &groups[m];
+                let BitPosition { word, bit } = &groups[m + 1];
                 state[*word] = state[*word] | I::one() << (*bit as usize);
             }
         }
@@ -405,7 +418,7 @@ mod tests {
         let h = lovasz::<u32>(1);
         assert_eq!(h.n_vertices, 1);
         assert_eq!(h.hyperedges, vec![1]);
-        assert!(h.weights.iter().all(|i| i.get() == 1));        
+        assert!(h.weights.iter().all(|i| i.get() == 1));
     }
 
     #[test]
@@ -426,50 +439,50 @@ mod tests {
         #[rustfmt::skip]
         #[allow(clippy::unusual_byte_groupings)]
         let expected = vec![
-            0b11_000_00_0, 0b11,
-                             
-            0b01_111_00_0, 0b00, 
-            0b10_111_00_0, 0b00, 
-            0b00_111_00_0, 0b01, 
-            0b00_111_00_0, 0b10, 
-                             
-            0b01_001_11_0, 0b00, 
-            0b10_001_11_0, 0b00, 
-            0b00_001_11_0, 0b01, 
-            0b00_001_11_0, 0b10, 
-            0b01_010_11_0, 0b00, 
-            0b10_010_11_0, 0b00, 
-            0b00_010_11_0, 0b01, 
-            0b00_010_11_0, 0b10, 
-            0b01_100_11_0, 0b00, 
-            0b10_100_11_0, 0b00, 
-            0b00_100_11_0, 0b01, 
-            0b00_100_11_0, 0b10, 
-            
-            0b01_001_01_1, 0b00, 
-            0b10_001_01_1, 0b00, 
-            0b00_001_01_1, 0b01, 
-            0b00_001_01_1, 0b10, 
-            0b01_010_01_1, 0b00, 
-            0b10_010_01_1, 0b00, 
-            0b00_010_01_1, 0b01, 
-            0b00_010_01_1, 0b10, 
-            0b01_100_01_1, 0b00, 
-            0b10_100_01_1, 0b00, 
-            0b00_100_01_1, 0b01, 
-            0b00_100_01_1, 0b10, 
-            0b01_001_10_1, 0b00, 
-            0b10_001_10_1, 0b00, 
-            0b00_001_10_1, 0b01, 
-            0b00_001_10_1, 0b10, 
-            0b01_010_10_1, 0b00, 
-            0b10_010_10_1, 0b00, 
-            0b00_010_10_1, 0b01, 
-            0b00_010_10_1, 0b10, 
-            0b01_100_10_1, 0b00, 
-            0b10_100_10_1, 0b00, 
-            0b00_100_10_1, 0b01, 
-            0b00_100_10_1, 0b10, 
+            0b0_0, 0b0_000_1111,
+
+            0b0_0, 0b0_111_0001,
+            0b0_0, 0b0_111_0010,
+            0b0_0, 0b0_111_0100,
+            0b0_0, 0b0_111_1000,
+
+            0b0_1, 0b1_001_0001,
+            0b0_1, 0b1_001_0010,
+            0b0_1, 0b1_001_0100,
+            0b0_1, 0b1_001_1000,
+            0b0_1, 0b1_010_0001,
+            0b0_1, 0b1_010_0010,
+            0b0_1, 0b1_010_0100,
+            0b0_1, 0b1_010_1000,
+            0b0_1, 0b1_100_0001,
+            0b0_1, 0b1_100_0010,
+            0b0_1, 0b1_100_0100,
+            0b0_1, 0b1_100_1000,
+
+            0b1_0, 0b1_001_0001,
+            0b1_0, 0b1_001_0010,
+            0b1_0, 0b1_001_0100,
+            0b1_0, 0b1_001_1000,
+            0b1_0, 0b1_010_0001,
+            0b1_0, 0b1_010_0010,
+            0b1_0, 0b1_010_0100,
+            0b1_0, 0b1_010_1000,
+            0b1_0, 0b1_100_0001,
+            0b1_0, 0b1_100_0010,
+            0b1_0, 0b1_100_0100,
+            0b1_0, 0b1_100_1000,
+            0b1_1, 0b0_001_0001,
+            0b1_1, 0b0_001_0010,
+            0b1_1, 0b0_001_0100,
+            0b1_1, 0b0_001_1000,
+            0b1_1, 0b0_010_0001,
+            0b1_1, 0b0_010_0010,
+            0b1_1, 0b0_010_0100,
+            0b1_1, 0b0_010_1000,
+            0b1_1, 0b0_100_0001,
+            0b1_1, 0b0_100_0010,
+            0b1_1, 0b0_100_0100,
+            0b1_1, 0b0_100_1000,
         ];
         assert_eq!(h.hyperedges, expected);
 
@@ -492,5 +505,4 @@ mod tests {
         // Check that all hyperedges have a weight of 10
         assert!(h.weights.iter().all(|i| i.get() == 10));
     }
-
 }

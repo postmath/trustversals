@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 /// A hypergraph with `n_vertices` vertices and `len(weights)` hyperedges. Each hyperedge is
 /// described as a bitmap of `chunk_size` entries of `hyperedges`; the ith hyperedge consists of
 /// `hyperedges[i * chunk_size .. (i+1) * chunk_size]`. The presence of vertex 0 in this hyperedge
-/// is indicated by the lowest bit of `hyperedges[i * chunk_size]`. The empty hyperedge is not
+/// is indicated by the lowest bit of `hyperedges[(i+1) * chunk_size - 1]`. The empty hyperedge is not
 /// allowed. The ith hyperedge has weight (size) `weights[i]`.
 pub struct Hypergraph<I>
 where
