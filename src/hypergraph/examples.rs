@@ -1,4 +1,4 @@
-use super::*;
+use crate::hypergraph::{BitPosition, HNumber, Hypergraph};
 
 #[inline]
 fn mask_complement<I>(mask: I) -> I
@@ -223,50 +223,6 @@ pub fn binomial<I: HNumber>(n: usize, k: usize) -> Hypergraph<I> {
     }
 
     h
-}
-
-/// A bit position within a slice of words. `word` indicates which word we're referring to and `bit`
-/// indicates which bit in that word we're referring to.
-#[derive(Debug)]
-struct BitPosition {
-    word: usize,
-    bit: u32,
-}
-
-impl BitPosition {
-    /// Returns a vector of BitPosition structs such that the distance between the first two is 1, then 2, then 3, etc., up to and including an interval of length
-    /// `r` bits. Each word has `bit_size` bits. The last position is at bit 0 of a word. The first position is in word 0.
-    pub fn increasing(r: usize, bit_size: u32) -> Vec<Self> {
-        let bit_size_usize = bit_size as usize;
-        let bits_needed = r * (r + 1) / 2;
-        let words_needed = if bits_needed % (bit_size_usize) == 0 {
-            bits_needed / bit_size_usize
-        } else {
-            bits_needed / bit_size_usize + 1
-        };
-        (1u32..=(r as u32))
-            .chain(std::iter::once(0))
-            .rev()
-            .scan(
-                BitPosition {
-                    word: words_needed - 1,
-                    bit: 0u32,
-                },
-                |state, value| {
-                    state.bit += value;
-                    state.word -= (state.bit / bit_size) as usize;
-                    state.bit %= bit_size;
-                    Some(BitPosition {
-                        bit: state.bit,
-                        word: state.word,
-                    })
-                },
-            )
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
-    }
 }
 
 /// Creates the Lovasz hypergraph of order `r`. Its vertices are divided into groups of size 1, 2,

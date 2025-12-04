@@ -1,5 +1,7 @@
 pub mod examples;
+pub mod transversals;
 
+use crate::hyperedge::BitPosition;
 use crate::numbers::HNumber;
 use std::cmp::Ordering;
 use std::num::NonZeroU32;
@@ -53,10 +55,20 @@ where
         self.hyperedges.extend_from_slice(edge);
     }
 
-    fn bucket_sort_weights(&mut self) {
-        // We want weight_count[i] to be the number of hyperedges of weight i+1.
-        let mut weight_count = vec![0; self.n_vertices as usize];
-        for w in self.weights.iter() {
+    /// Sort the hyperedges in order of increasing weight, and within a weight class, sort the
+    /// hyperedges lexicographically (meaning, by the first bit, then by the second bit, etc). This
+    /// returns a vector `positions` such that the hyperedges of weight `i+1` are found in the
+    /// range `hyperedges[positions[i]..positions[i+1]]`.
+    fn bucket_sort_weights_external(
+        hyperedges: &mut [I],
+        weights: &mut [NonZeroU32],
+        chunk_size: usize,
+        n_vertices: u32,
+    ) -> Vec<usize> {
+        // We want weight_count[i] to be the number of hyperedges of weight i+1. weight_count has
+        // n_vertices entries, so that positions has the expected number of entries.
+        let mut weight_count = vec![0; n_vertices as usize];
+        for w in weights.iter() {
             weight_count[w.get() as usize - 1] += 1;
         }
 
@@ -77,41 +89,92 @@ where
         // writing to that index. That means that we end up with the reverse: after the loop,
         // positions[i] .. positions[i+1] will contain the hyperedges of weight i, where we
         // interpret positions[self.n_vertices] as self.weights.len().
-        let mut new_hyperedges = vec![I::zero(); self.hyperedges.len()];
-        for i in 0..self.weights.len() {
-            let w = (self.weights[i].get() - 1) as usize;
+        let mut new_hyperedges = vec![I::zero(); hyperedges.len()];
+        for i in 0..weights.len() {
+            let w = (weights[i].get() - 1) as usize;
             positions[w] -= 1;
             let p = positions[w];
-            new_hyperedges[p * self.chunk_size..(p + 1) * self.chunk_size]
-                .copy_from_slice(&self.hyperedges[i * self.chunk_size..(i + 1) * self.chunk_size]);
+            new_hyperedges[p * chunk_size..(p + 1) * chunk_size]
+                .copy_from_slice(&hyperedges[i * chunk_size..(i + 1) * chunk_size]);
         }
-        self.hyperedges = new_hyperedges;
+        hyperedges.copy_from_slice(&new_hyperedges);
 
         // We add a final entry so that this works for each of the subranges.
-        positions.push(self.weights.len());
+        positions.push(weights.len());
 
         // Now let's update the weights.
-        for i in 0..self.n_vertices {
+        for i in 0..n_vertices {
             let j = i as usize;
-            self.weights[positions[j]..positions[j + 1]].fill(NonZeroU32::new(i + 1).unwrap());
+            weights[positions[j]..positions[j + 1]].fill(NonZeroU32::new(i + 1).unwrap());
         }
+
+        positions
+    }
+
+    /// Sort the hypergraph that would be given by the given vectors. This returns a vector
+    /// `positions` such that the hyperedges of weight `i+1` are found in the range
+    /// `hyperedges[positions[i]..positions[i+1]]`.
+    pub fn sort_external(
+        hyperedges: &mut [I],
+        weights: &mut [NonZeroU32],
+        chunk_size: usize,
+        n_vertices: u32,
+    ) -> Vec<usize> {
+        // We can't easily use a "canned" sorting algorithm, because we need to sort hyperedges and
+        // weights in tandem. But we can do a bucket sort by weight: the possible weights range from
+        // 1 to n_vertices, which we should be willing to store.
+
+        let positions =
+            Hypergraph::bucket_sort_weights_external(hyperedges, weights, chunk_size, n_vertices);
+
+        // Finally, we sort each of the segments of equal weight.
+        for i in 0..positions.len() - 1 {
+            sort_slice_of_chunks(
+                &mut hyperedges[positions[i] * chunk_size..positions[i + 1] * chunk_size],
+                chunk_size,
+            );
+        }
+
+        assert!(Hypergraph::is_sorted_external(
+            hyperedges, weights, chunk_size
+        ));
+        positions
     }
 
     /// Sort the hyperedges in order of increasing weight, and within a weight class, sort the
-    /// hyperedges by increasing value. Uniquify the hyperedges, too.
+    /// hyperedges by increasing value.
     pub fn sort(&mut self) {
         // We can't easily use a "canned" sorting algorithm, because we need to sort hyperedges and
         // weights in tandem. But we can do a bucket sort by weight: the possible weights range from
         // 1 to n_vertices, which we should be willing to store.
-        self.bucket_sort_weights();
 
-        // Finally, we sort each of the segments of equal weight.
-        for i in 0..self.n_vertices as usize - 1 {
-            sort_slice_of_chunks(
-                &mut self.hyperedges[i * self.chunk_size..(i + 1) * self.chunk_size],
-                self.chunk_size,
-            );
+        let Hypergraph {
+            ref mut hyperedges,
+            ref mut weights,
+            ..
+        } = self;
+        Hypergraph::sort_external(hyperedges, weights, self.chunk_size, self.n_vertices);
+    }
+
+    /// Check whether the hypergraph given by the provided vectors is sorted in order of increasing
+    /// weight, and within a weight class, sorted by increasing edge value.
+    pub fn is_sorted_external(hyperedges: &[I], weights: &[NonZeroU32], chunk_size: usize) -> bool {
+        for i in 1..weights.len() {
+            if weights[i] < weights[i - 1] {
+                return false;
+            } else if weights[i] == weights[i - 1] {
+                if compare_chunks(hyperedges, chunk_size, i - 1, i) == Ordering::Greater {
+                    return false;
+                }
+            }
         }
+        true
+    }
+
+    /// Check whether the hypergraph is sorted in order of increasing weight, and within a weight
+    /// class, sorted by increasing edge value.
+    pub fn is_sorted(&self) -> bool {
+        Hypergraph::is_sorted_external(&self.hyperedges, &self.weights, self.chunk_size)
     }
 }
 
@@ -120,13 +183,18 @@ where
     I: std::fmt::Binary + HNumber,
 {
     pub fn print_edges(&self) {
-        let bit_size = std::mem::size_of::<I>() * 8;
-        for i in 0..self.weights.len() {
-            for j in 0..self.chunk_size {
-                let word = self.hyperedges[i * self.chunk_size + j];
-                print!("{word:0w$b} ", w = bit_size);
+        self.print_edges_external(&*self.hyperedges);
+    }
+
+    pub fn print_edges_external(&self, hyperedges: &[I]) {
+        let mut i = 0;
+        for e in hyperedges {
+            if i == self.chunk_size - 1 {
+                eprintln!("{0:01$b}", e, std::mem::size_of::<I>() * 8);
+            } else {
+                eprint!("{0:01$b} ", e, std::mem::size_of::<I>() * 8);
             }
-            println!("");
+            i = (i + 1) % self.chunk_size;
         }
     }
 }
@@ -161,6 +229,13 @@ where
     for (dest, src) in chunks.iter_mut().zip(new_order) {
         *dest = src;
     }
+}
+
+pub(crate) fn nz_one() -> NonZeroU32 {
+    NonZeroU32::new(1).expect("One should always be non-zero")
+}
+pub(crate) fn nz_two() -> NonZeroU32 {
+    NonZeroU32::new(2).expect("Two should always be non-zero")
 }
 
 #[cfg(test)]

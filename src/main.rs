@@ -2,6 +2,7 @@ use hypergraph::examples;
 
 mod hypergraph;
 mod numbers;
+mod hyperedge;
 
 fn main() {
     let mut h = examples::binomial::<u32>(10, 5);
