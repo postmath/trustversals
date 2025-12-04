@@ -1,5 +1,3 @@
-use std::f32::consts::E;
-
 use crate::hyperedge::{BitPosition, Hyperedge};
 use crate::hypergraph::{nz_one, nz_two, Hypergraph, NonZeroU32};
 use crate::numbers::HNumber;
@@ -170,7 +168,7 @@ where
                 }
 
                 li += 1;
-                if (li < n_left) {
+                if li < n_left {
                     left_edge.edge = &left_edges[li * self.chunk_size..(li + 1) * self.chunk_size];
                     left_edge.weight = left_weights[li];
                 }
@@ -191,7 +189,7 @@ where
                 }
 
                 ri += 1;
-                if (ri < n_right) {
+                if ri < n_right {
                     right_edge.edge =
                         &right_edges[ri * self.chunk_size..(ri + 1) * self.chunk_size];
                     right_edge.weight = right_weights[ri];
@@ -204,12 +202,12 @@ where
                 target_weights.push(left_weights[li]);
 
                 li += 1;
-                if (li < n_left) {
+                if li < n_left {
                     left_edge.edge = &left_edges[li * self.chunk_size..(li + 1) * self.chunk_size];
                     left_edge.weight = left_weights[li];
                 }
                 ri += 1;
-                if (ri < n_right) {
+                if ri < n_right {
                     right_edge.edge =
                         &right_edges[ri * self.chunk_size..(ri + 1) * self.chunk_size];
                     right_edge.weight = right_weights[ri];
@@ -217,7 +215,7 @@ where
             }
         }
 
-        let positions = Hypergraph::sort_external(
+        Hypergraph::sort_external(
             target_edges,
             target_weights,
             self.chunk_size,
